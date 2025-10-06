@@ -1,11 +1,11 @@
 /*
-* Programming Assignment 02: lsv1.0.0
-* This is the source file of version 1.0.0
-* Read the write-up of the assignment to add the features to this base version
-* Usage:
-*       $ lsv1.0.0 
-*       % lsv1.0.0  /home
-*       $ lsv1.0.0  /home/kali/   /etc/
+* Programming Assignment 02: lsv1.2.0
+* Features:
+*   - Default: Adaptive column display
+*   - -l flag: Long listing format
+*   - Dynamically reads all filenames
+*   - Calculates terminal width
+*   - Down-then-across column printing
 */
 
 #include <stdio.h>
@@ -15,40 +15,37 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
-#include <getopt.h>
-#include <pwd.h>     
-#include <grp.h>     
+#include <sys/ioctl.h>
+#include <pwd.h>
+#include <grp.h>
 #include <time.h>
 
 extern int errno;
 
+/* Function declarations */
 void do_ls(const char *dir);
-void do_ls_long(const char *dir);   
-
+void do_ls_long(const char *dir);
 
 int main(int argc, char *argv[])
 {
-    int opt;                 // holds option character
-    int long_format = 0;     // flag variable for -l
-    opterr = 0;              // disable automatic getopt() errors
+    int opt;
+    int long_format = 0;
+    opterr = 0; // Disable default getopt error messages
 
-    // If no arguments → list current directory
     if (argc == 1)
     {
         do_ls(".");
         return 0;
     }
 
-    // Parse options using getopt()
     while ((opt = getopt(argc, argv, "l")) != -1)
     {
         switch (opt)
         {
             case 'l':
-                long_format = 1; // user typed -l
+                long_format = 1;
                 break;
-
-            case '?':   // invalid or undeclared option
+            case '?':
             default:
                 fprintf(stderr, "Error: Invalid option '-%c'\n", optopt);
                 fprintf(stderr, "Usage: %s [-l] [directory...]\n", argv[0]);
@@ -56,7 +53,6 @@ int main(int argc, char *argv[])
         }
     }
 
-    // If no directories specified after options
     if (optind == argc)
     {
         if (long_format)
@@ -66,16 +62,13 @@ int main(int argc, char *argv[])
     }
     else
     {
-        // Loop through each directory given
         for (int i = optind; i < argc; i++)
         {
             printf("Directory listing of %s:\n", argv[i]);
-
             if (long_format)
                 do_ls_long(argv[i]);
             else
                 do_ls(argv[i]);
-
             puts("");
         }
     }
@@ -83,48 +76,88 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-
+/* ---------------------------------------------------------------
+ * do_ls(): Adaptive Column Display (Default mode)
+ * --------------------------------------------------------------- */
 void do_ls(const char *dir)
 {
     struct dirent *entry;
     DIR *dp = opendir(dir);
-
-    if (dp == NULL)
+    if (!dp)
     {
-        fprintf(stderr, "Cannot open directory : %s\n", dir);
+        fprintf(stderr, "Cannot open directory: %s\n", dir);
         return;
     }
 
-    errno = 0;
+    char **filenames = NULL;
+    int count = 0, max_len = 0;
 
+    // Step 1: Read all filenames and find the longest name
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
             continue;
-        printf("%s\n", entry->d_name);
-    }
 
-    if (errno != 0)
-    {
-        perror("readdir failed");
-    }
+        filenames = realloc(filenames, (count + 1) * sizeof(char *));
+        filenames[count] = strdup(entry->d_name);
 
+        int len = strlen(entry->d_name);
+        if (len > max_len)
+            max_len = len;
+
+        count++;
+    }
     closedir(dp);
+
+    if (count == 0)
+        return;
+
+    // Step 2: Determine terminal width
+    struct winsize w;
+    int term_width = 80; // fallback
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+        term_width = w.ws_col;
+
+    // Step 3: Calculate layout
+    int spacing = 2;
+    int col_width = max_len + spacing;
+    int num_cols = term_width / col_width;
+    if (num_cols < 1) num_cols = 1;
+
+    int num_rows = (count + num_cols - 1) / num_cols; // ceiling division
+
+    // Step 4: Print down-then-across
+    for (int row = 0; row < num_rows; row++)
+    {
+        for (int col = 0; col < num_cols; col++)
+        {
+            int index = col * num_rows + row;
+            if (index < count)
+                printf("%-*s", col_width, filenames[index]);
+        }
+        printf("\n");
+    }
+
+    // Step 5: Cleanup
+    for (int i = 0; i < count; i++)
+        free(filenames[i]);
+    free(filenames);
 }
 
+/* ---------------------------------------------------------------
+ * do_ls_long(): Long Listing Format (for -l)
+ * --------------------------------------------------------------- */
 void do_ls_long(const char *dir)
 {
     struct dirent *entry;
     DIR *dp = opendir(dir);
-
-    if (dp == NULL)
+    if (!dp)
     {
-        fprintf(stderr, "Cannot open directory : %s\n", dir);
+        fprintf(stderr, "Cannot open directory: %s\n", dir);
         return;
     }
 
     errno = 0;
-
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
@@ -140,7 +173,6 @@ void do_ls_long(const char *dir)
             continue;
         }
 
-        /* -------- File type and permissions -------- */
         char perms[11];
         perms[0] = S_ISDIR(info.st_mode) ? 'd' :
                    S_ISLNK(info.st_mode) ? 'l' :
@@ -148,7 +180,6 @@ void do_ls_long(const char *dir)
                    S_ISBLK(info.st_mode) ? 'b' :
                    S_ISFIFO(info.st_mode) ? 'p' :
                    S_ISSOCK(info.st_mode) ? 's' : '-';
-
         perms[1] = (info.st_mode & S_IRUSR) ? 'r' : '-';
         perms[2] = (info.st_mode & S_IWUSR) ? 'w' : '-';
         perms[3] = (info.st_mode & S_IXUSR) ? 'x' : '-';
@@ -160,7 +191,6 @@ void do_ls_long(const char *dir)
         perms[9] = (info.st_mode & S_IXOTH) ? 'x' : '-';
         perms[10] = '\0';
 
-        /* -------- Owner, group, and modification time -------- */
         struct passwd *pw = getpwuid(info.st_uid);
         struct group  *gr = getgrgid(info.st_gid);
         const char *user = pw ? pw->pw_name : "unknown";
@@ -170,7 +200,6 @@ void do_ls_long(const char *dir)
         struct tm *tm = localtime(&info.st_mtime);
         strftime(time_str, sizeof(time_str), "%b %d %H:%M", tm);
 
-        /* -------- Print formatted output -------- */
         printf("%s %2lu %-8s %-8s %8ld %s %s\n",
                perms,
                info.st_nlink,
