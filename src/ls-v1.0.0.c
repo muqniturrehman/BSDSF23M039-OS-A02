@@ -25,52 +25,53 @@ extern int errno;
 /* Function declarations */
 void do_ls(const char *dir);
 void do_ls_long(const char *dir);
+void do_ls_horizontal(const char *dir);
 
 int main(int argc, char *argv[])
 {
     int opt;
-    int long_format = 0;
-    opterr = 0; // Disable default getopt error messages
+    int display_mode = 0; // 0 = default, 1 = long (-l), 2 = horizontal (-x)
+    opterr = 0;           // disable getopt default error messages
 
-    if (argc == 1)
-    {
-        do_ls(".");
-        return 0;
-    }
-
-    while ((opt = getopt(argc, argv, "l")) != -1)
+    // Parse options
+    while ((opt = getopt(argc, argv, "lx")) != -1)
     {
         switch (opt)
         {
-            case 'l':
-                long_format = 1;
-                break;
+            case 'l': display_mode = 1; break;
+            case 'x': display_mode = 2; break;
             case '?':
             default:
-                fprintf(stderr, "Error: Invalid option '-%c'\n", optopt);
-                fprintf(stderr, "Usage: %s [-l] [directory...]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-l | -x] [directory...]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
 
+    // If no directories provided → default to current directory
     if (optind == argc)
     {
-        if (long_format)
+        if (display_mode == 1)
             do_ls_long(".");
+        else if (display_mode == 2)
+            do_ls_horizontal(".");
         else
             do_ls(".");
+        return 0;
     }
-    else
+
+    // Process multiple directories
+    for (int i = optind; i < argc; i++)
     {
-        for (int i = optind; i < argc; i++)
-        {
-            printf("Directory listing of %s:\n", argv[i]);
-            if (long_format)
-                do_ls_long(argv[i]);
-            else
-                do_ls(argv[i]);
-            puts("");
-        }
+        printf("Directory listing of %s:\n", argv[i]);
+
+        if (display_mode == 1)
+            do_ls_long(argv[i]);
+        else if (display_mode == 2)
+            do_ls_horizontal(argv[i]);
+        else
+            do_ls(argv[i]);
+
+        puts("");
     }
 
     return 0;
@@ -214,4 +215,70 @@ void do_ls_long(const char *dir)
         perror("readdir failed");
 
     closedir(dp);
+}
+void do_ls_horizontal(const char *dir)
+{
+    struct dirent *entry;
+    DIR *dp = opendir(dir);
+
+    if (!dp)
+    {
+        fprintf(stderr, "Cannot open directory: %s\n", dir);
+        return;
+    }
+
+    char **filenames = NULL;
+    int count = 0, max_len = 0;
+
+    // Step 1: Read all filenames and find the longest name
+    while ((entry = readdir(dp)) != NULL)
+    {
+        if (entry->d_name[0] == '.')
+            continue;
+
+        filenames = realloc(filenames, (count + 1) * sizeof(char *));
+        filenames[count] = strdup(entry->d_name);
+
+        int len = strlen(entry->d_name);
+        if (len > max_len)
+            max_len = len;
+
+        count++;
+    }
+    closedir(dp);
+
+    if (count == 0)
+        return;
+
+    // Step 2: Determine terminal width
+    struct winsize w;
+    int term_width = 80; // default fallback
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+        term_width = w.ws_col;
+
+    int spacing = 2;
+    int col_width = max_len + spacing;
+    int curr_width = 0;
+
+    // Step 3: Print horizontally (left-to-right)
+    for (int i = 0; i < count; i++)
+    {
+        int len = strlen(filenames[i]);
+
+        // Wrap to next line if exceeding terminal width
+        if (curr_width + col_width > term_width)
+        {
+            printf("\n");
+            curr_width = 0;
+        }
+
+        printf("%-*s", col_width, filenames[i]);
+        curr_width += col_width;
+    }
+    printf("\n");
+
+    // Step 4: Cleanup
+    for (int i = 0; i < count; i++)
+        free(filenames[i]);
+    free(filenames);
 }
