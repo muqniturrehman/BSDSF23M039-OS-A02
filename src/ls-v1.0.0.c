@@ -1,11 +1,12 @@
 /*
-* Programming Assignment 02: lsv1.2.0
+* Programming Assignment 02: lsv1.6.0
 * Features:
 *   - Default: Adaptive column display
 *   - -l flag: Long listing format
-*   - Dynamically reads all filenames
-*   - Calculates terminal width
-*   - Down-then-across column printing
+*   - -x flag: Horizontal display
+*   - -R flag: Recursive listing
+*   - Colorized output by file type
+*   - Alphabetical sorting
 */
 
 #include <stdio.h>
@@ -19,7 +20,7 @@
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
-// ======== COLOR CODES (ANSI ESCAPE SEQUENCES) ========
+
 #define COLOR_RESET   "\033[0m"
 #define COLOR_BLUE    "\033[0;34m"
 #define COLOR_GREEN   "\033[0;32m"
@@ -27,79 +28,64 @@
 #define COLOR_PINK    "\033[0;35m"
 #define COLOR_REVERSE "\033[7m"
 
-
 extern int errno;
 
-/* Function declarations */
-void do_ls(const char *dir);
+/* ---------- Function Declarations ---------- */
+void do_ls(const char *dir, int display_mode, int recursive_flag);
 void do_ls_long(const char *dir);
 void do_ls_horizontal(const char *dir);
-void print_colored(const char *name, const char *dir, mode_t mode);   // ✅ add this line
-
+void print_colored(const char *name, const char *dir, mode_t mode);
 
 int compare_filenames(const void *a, const void *b)
 {
     const char *fa = *(const char **)a;
     const char *fb = *(const char **)b;
-    return strcasecmp(fa, fb);   
+    return strcasecmp(fa, fb);
 }
 
-
+/* ---------- MAIN FUNCTION ---------- */
 int main(int argc, char *argv[])
 {
     int opt;
-    int display_mode = 0; // 0 = default, 1 = long (-l), 2 = horizontal (-x)
-    opterr = 0;           // disable getopt default error messages
+    int display_mode = 0;    // 0 = default, 1 = long (-l), 2 = horizontal (-x)
+    int recursive_flag = 0;  // for -R option
+    opterr = 0;
 
-    // Parse options
-    while ((opt = getopt(argc, argv, "lx")) != -1)
+    while ((opt = getopt(argc, argv, "lxR")) != -1)
     {
         switch (opt)
         {
             case 'l': display_mode = 1; break;
             case 'x': display_mode = 2; break;
+            case 'R': recursive_flag = 1; break;
             case '?':
             default:
-                fprintf(stderr, "Usage: %s [-l | -x] [directory...]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-l | -x | -R] [directory...]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
 
-    // If no directories provided → default to current directory
     if (optind == argc)
     {
-        if (display_mode == 1)
-            do_ls_long(".");
-        else if (display_mode == 2)
-            do_ls_horizontal(".");
-        else
-            do_ls(".");
+        do_ls(".", display_mode, recursive_flag);
         return 0;
     }
 
-    // Process multiple directories
     for (int i = optind; i < argc; i++)
     {
-        printf("Directory listing of %s:\n", argv[i]);
-
-        if (display_mode == 1)
-            do_ls_long(argv[i]);
-        else if (display_mode == 2)
-            do_ls_horizontal(argv[i]);
-        else
-            do_ls(argv[i]);
-
-        puts("");
+        do_ls(argv[i], display_mode, recursive_flag);
     }
 
     return 0;
 }
 
 /* ---------------------------------------------------------------
- * do_ls(): Adaptive Column Display (Default mode)
+ * do_ls(): Main Listing Function with Recursive Support (-R)
  * --------------------------------------------------------------- */
-void do_ls(const char *dir)
+void do_ls(const char *dir, int display_mode, int recursive_flag)
 {
+    printf("\n%s:\n", dir);
+
     struct dirent *entry;
     DIR *dp = opendir(dir);
     if (!dp)
@@ -111,7 +97,6 @@ void do_ls(const char *dir)
     char **filenames = NULL;
     int count = 0, max_len = 0;
 
-    // Step 1: Read all filenames and find the longest name
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
@@ -123,67 +108,84 @@ void do_ls(const char *dir)
         int len = strlen(entry->d_name);
         if (len > max_len)
             max_len = len;
-
         count++;
     }
     closedir(dp);
-	if (count > 1)
-    qsort(filenames, count, sizeof(char *), compare_filenames);
 
+    if (count > 1)
+        qsort(filenames, count, sizeof(char *), compare_filenames);
     if (count == 0)
         return;
 
-    // Step 2: Determine terminal width
-    struct winsize w;
-    int term_width = 80; // fallback
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
-        term_width = w.ws_col;
-
-    // Step 3: Calculate layout
-    int spacing = 2;
-    int col_width = max_len + spacing;
-    int num_cols = term_width / col_width;
-    if (num_cols < 1) num_cols = 1;
-
-    int num_rows = (count + num_cols - 1) / num_cols; // ceiling division
-
-    // Step 4: Print down-then-across
-    for (int row = 0; row < num_rows; row++)
+    // ---------- Display Section ----------
+    if (display_mode == 1)
+        do_ls_long(dir);
+    else if (display_mode == 2)
+        do_ls_horizontal(dir);
+    else
     {
-        for (int col = 0; col < num_cols; col++)
+        struct winsize w;
+        int term_width = 80;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+            term_width = w.ws_col;
+
+        int spacing = 2;
+        int col_width = max_len + spacing;
+        int num_cols = term_width / col_width;
+        if (num_cols < 1) num_cols = 1;
+        int num_rows = (count + num_cols - 1) / num_cols;
+
+        for (int row = 0; row < num_rows; row++)
         {
-            int index = col * num_rows + row;
-            if (index < count)
-			{
-				struct stat info;
-				char path[1024];
-				snprintf(path, sizeof(path), "%s/%s", dir, filenames[index]);
+            for (int col = 0; col < num_cols; col++)
+            {
+                int index = col * num_rows + row;
+                if (index < count)
+                {
+                    struct stat info;
+                    char path[1024];
+                    snprintf(path, sizeof(path), "%s/%s", dir, filenames[index]);
 
-				if (stat(path, &info) == 0)
-				{
-					print_colored(filenames[index], dir, info.st_mode);
-					int pad = col_width - (int)strlen(filenames[index]);
-					for (int p = 0; p < pad; p++) printf(" ");
-				}
-				else
-				{
-				printf("%-*s", col_width, filenames[index]);
-			}
-		}
-
-
+                    if (stat(path, &info) == 0)
+                    {
+                        print_colored(filenames[index], dir, info.st_mode);
+                        int pad = col_width - (int)strlen(filenames[index]);
+                        for (int p = 0; p < pad; p++) printf(" ");
+                    }
+                    else
+                        printf("%-*s", col_width, filenames[index]);
+                }
+            }
+            printf("\n");
         }
-        printf("\n");
     }
 
-    // Step 5: Cleanup
+    // ---------- Recursive Section ----------
+    if (recursive_flag)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            char subpath[1024];
+            snprintf(subpath, sizeof(subpath), "%s/%s", dir, filenames[i]);
+
+            struct stat info;
+            if (lstat(subpath, &info) == 0 && S_ISDIR(info.st_mode))
+            {
+                if (strcmp(filenames[i], ".") != 0 && strcmp(filenames[i], "..") != 0)
+                {
+                    do_ls(subpath, display_mode, recursive_flag);
+                }
+            }
+        }
+    }
+
     for (int i = 0; i < count; i++)
         free(filenames[i]);
     free(filenames);
 }
 
 /* ---------------------------------------------------------------
- * do_ls_long(): Long Listing Format (for -l)
+ * do_ls_long(): Long Listing Format (-l)
  * --------------------------------------------------------------- */
 void do_ls_long(const char *dir)
 {
@@ -238,22 +240,24 @@ void do_ls_long(const char *dir)
         struct tm *tm = localtime(&info.st_mtime);
         strftime(time_str, sizeof(time_str), "%b %d %H:%M", tm);
 
-        printf("%s %2lu %-8s %-8s %8ld %s ", perms, info.st_nlink, user, group, info.st_size, time_str);
-		print_colored(entry->d_name, dir, info.st_mode);
-		printf("\n");
-
+        printf("%s %2lu %-8s %-8s %8ld %s ",
+               perms, info.st_nlink, user, group, info.st_size, time_str);
+        print_colored(entry->d_name, dir, info.st_mode);
+        printf("\n");
     }
 
     if (errno != 0)
         perror("readdir failed");
-
     closedir(dp);
 }
+
+/* ---------------------------------------------------------------
+ * do_ls_horizontal(): Horizontal (row-major) Display (-x)
+ * --------------------------------------------------------------- */
 void do_ls_horizontal(const char *dir)
 {
     struct dirent *entry;
     DIR *dp = opendir(dir);
-
     if (!dp)
     {
         fprintf(stderr, "Cannot open directory: %s\n", dir);
@@ -263,7 +267,6 @@ void do_ls_horizontal(const char *dir)
     char **filenames = NULL;
     int count = 0, max_len = 0;
 
-    // Step 1: Read all filenames and find the longest name
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
@@ -275,19 +278,17 @@ void do_ls_horizontal(const char *dir)
         int len = strlen(entry->d_name);
         if (len > max_len)
             max_len = len;
-
         count++;
     }
     closedir(dp);
-	if (count > 1)
-    qsort(filenames, count, sizeof(char *), compare_filenames);
 
+    if (count > 1)
+        qsort(filenames, count, sizeof(char *), compare_filenames);
     if (count == 0)
         return;
 
-    // Step 2: Determine terminal width
     struct winsize w;
-    int term_width = 80; // default fallback
+    int term_width = 80;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
         term_width = w.ws_col;
 
@@ -295,12 +296,8 @@ void do_ls_horizontal(const char *dir)
     int col_width = max_len + spacing;
     int curr_width = 0;
 
-    // Step 3: Print horizontally (left-to-right)
     for (int i = 0; i < count; i++)
     {
-        int len = strlen(filenames[i]);
-
-        // Wrap to next line if exceeding terminal width
         if (curr_width + col_width > term_width)
         {
             printf("\n");
@@ -308,47 +305,44 @@ void do_ls_horizontal(const char *dir)
         }
 
         struct stat info;
-		char path[1024];
-		snprintf(path, sizeof(path), "%s/%s", dir, filenames[i]);
-	
-		if (stat(path, &info) == 0)
-		{
-		print_colored(filenames[i], dir, info.st_mode);
-		int pad = col_width - (int)strlen(filenames[i]);
-		for (int p = 0; p < pad; p++) printf(" ");
-		}
-		else
-	{
-		printf("%-*s", col_width, filenames[i]);
-	}
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", dir, filenames[i]);
+
+        if (stat(path, &info) == 0)
+        {
+            print_colored(filenames[i], dir, info.st_mode);
+            int pad = col_width - (int)strlen(filenames[i]);
+            for (int p = 0; p < pad; p++) printf(" ");
+        }
+        else
+            printf("%-*s", col_width, filenames[i]);
 
         curr_width += col_width;
     }
     printf("\n");
 
-    // Step 4: Cleanup
     for (int i = 0; i < count; i++)
         free(filenames[i]);
     free(filenames);
 }
+
+/* ---------------------------------------------------------------
+ * print_colored(): Apply ANSI Colors by File Type
+ * --------------------------------------------------------------- */
 void print_colored(const char *name, const char *dir, mode_t mode)
 {
-    char path[1024];
-    snprintf(path, sizeof(path), "%s/%s", dir, name);
-
-    // Determine color based on file type
     const char *color = COLOR_RESET;
 
     if (S_ISDIR(mode))
-        color = COLOR_BLUE;   // Directory → Blue
+        color = COLOR_BLUE;
     else if (S_ISLNK(mode))
-        color = COLOR_PINK;   // Symbolic Link → Pink
+        color = COLOR_PINK;
     else if (S_ISCHR(mode) || S_ISBLK(mode) || S_ISSOCK(mode))
-        color = COLOR_REVERSE; // Special Files → Reverse video
+        color = COLOR_REVERSE;
     else if (mode & S_IXUSR)
-        color = COLOR_GREEN;  // Executable → Green
+        color = COLOR_GREEN;
     else if (strstr(name, ".tar") || strstr(name, ".gz") || strstr(name, ".zip"))
-        color = COLOR_RED;    // Archives → Red
+        color = COLOR_RED;
 
     printf("%s%s%s", color, name, COLOR_RESET);
 }
