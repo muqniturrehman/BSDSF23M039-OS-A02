@@ -19,6 +19,13 @@
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
+// ======== COLOR CODES (ANSI ESCAPE SEQUENCES) ========
+#define COLOR_RESET   "\033[0m"
+#define COLOR_BLUE    "\033[0;34m"
+#define COLOR_GREEN   "\033[0;32m"
+#define COLOR_RED     "\033[0;31m"
+#define COLOR_PINK    "\033[0;35m"
+#define COLOR_REVERSE "\033[7m"
 
 
 extern int errno;
@@ -27,6 +34,8 @@ extern int errno;
 void do_ls(const char *dir);
 void do_ls_long(const char *dir);
 void do_ls_horizontal(const char *dir);
+void print_colored(const char *name, const char *dir, mode_t mode);   // ✅ add this line
+
 
 int compare_filenames(const void *a, const void *b)
 {
@@ -145,7 +154,24 @@ void do_ls(const char *dir)
         {
             int index = col * num_rows + row;
             if (index < count)
-                printf("%-*s", col_width, filenames[index]);
+			{
+				struct stat info;
+				char path[1024];
+				snprintf(path, sizeof(path), "%s/%s", dir, filenames[index]);
+
+				if (stat(path, &info) == 0)
+				{
+					print_colored(filenames[index], dir, info.st_mode);
+					int pad = col_width - (int)strlen(filenames[index]);
+					for (int p = 0; p < pad; p++) printf(" ");
+				}
+				else
+				{
+				printf("%-*s", col_width, filenames[index]);
+			}
+		}
+
+
         }
         printf("\n");
     }
@@ -212,14 +238,10 @@ void do_ls_long(const char *dir)
         struct tm *tm = localtime(&info.st_mtime);
         strftime(time_str, sizeof(time_str), "%b %d %H:%M", tm);
 
-        printf("%s %2lu %-8s %-8s %8ld %s %s\n",
-               perms,
-               info.st_nlink,
-               user,
-               group,
-               info.st_size,
-               time_str,
-               entry->d_name);
+        printf("%s %2lu %-8s %-8s %8ld %s ", perms, info.st_nlink, user, group, info.st_size, time_str);
+		print_colored(entry->d_name, dir, info.st_mode);
+		printf("\n");
+
     }
 
     if (errno != 0)
@@ -285,7 +307,21 @@ void do_ls_horizontal(const char *dir)
             curr_width = 0;
         }
 
-        printf("%-*s", col_width, filenames[i]);
+        struct stat info;
+		char path[1024];
+		snprintf(path, sizeof(path), "%s/%s", dir, filenames[i]);
+	
+		if (stat(path, &info) == 0)
+		{
+		print_colored(filenames[i], dir, info.st_mode);
+		int pad = col_width - (int)strlen(filenames[i]);
+		for (int p = 0; p < pad; p++) printf(" ");
+		}
+		else
+	{
+		printf("%-*s", col_width, filenames[i]);
+	}
+
         curr_width += col_width;
     }
     printf("\n");
@@ -294,4 +330,25 @@ void do_ls_horizontal(const char *dir)
     for (int i = 0; i < count; i++)
         free(filenames[i]);
     free(filenames);
+}
+void print_colored(const char *name, const char *dir, mode_t mode)
+{
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+
+    // Determine color based on file type
+    const char *color = COLOR_RESET;
+
+    if (S_ISDIR(mode))
+        color = COLOR_BLUE;   // Directory → Blue
+    else if (S_ISLNK(mode))
+        color = COLOR_PINK;   // Symbolic Link → Pink
+    else if (S_ISCHR(mode) || S_ISBLK(mode) || S_ISSOCK(mode))
+        color = COLOR_REVERSE; // Special Files → Reverse video
+    else if (mode & S_IXUSR)
+        color = COLOR_GREEN;  // Executable → Green
+    else if (strstr(name, ".tar") || strstr(name, ".gz") || strstr(name, ".zip"))
+        color = COLOR_RED;    // Archives → Red
+
+    printf("%s%s%s", color, name, COLOR_RESET);
 }
