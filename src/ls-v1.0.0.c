@@ -20,12 +20,21 @@
 #include <grp.h>
 #include <time.h>
 
+
 extern int errno;
 
 /* Function declarations */
 void do_ls(const char *dir);
 void do_ls_long(const char *dir);
 void do_ls_horizontal(const char *dir);
+
+int compare_filenames(const void *a, const void *b)
+{
+    const char *fa = *(const char **)a;
+    const char *fb = *(const char **)b;
+    return strcasecmp(fa, fb);   
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -109,6 +118,8 @@ void do_ls(const char *dir)
         count++;
     }
     closedir(dp);
+	if (count > 1)
+    qsort(filenames, count, sizeof(char *), compare_filenames);
 
     if (count == 0)
         return;
@@ -246,6 +257,8 @@ void do_ls_horizontal(const char *dir)
         count++;
     }
     closedir(dp);
+	if (count > 1)
+    qsort(filenames, count, sizeof(char *), compare_filenames);
 
     if (count == 0)
         return;
